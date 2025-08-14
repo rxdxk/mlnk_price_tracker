@@ -1,5 +1,6 @@
 import requests
 import time
+import traceback
 
 # EOS RPC
 NODE_URL = "https://eos.greymass.com/v1/chain/get_table_rows"
@@ -15,7 +16,7 @@ def send_to_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message}
     try:
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print("Ошибка отправки в Telegram:", e)
 
@@ -33,7 +34,7 @@ def get_all_pairs():
             "upper_bound": upper_bound,
             "limit": 100
         }
-        r = requests.post(NODE_URL, json=payload).json()
+        r = requests.post(NODE_URL, json=payload, timeout=10).json()
         rows = r.get("rows", [])
         if not rows:
             break
@@ -57,31 +58,35 @@ def find_mlnk_price():
                 return amount1 / amount2, sym0
             elif sym0 == TARGET_SYMBOL:
                 return amount2 / amount1, sym1
-
     return None, None
 
 if __name__ == "__main__":
     last_price = None
 
     while True:
-        price, quote_sym = find_mlnk_price()
-        if price:
-            rounded_price = round(price, 8)  # округление до 8 знаков
-            if last_price is None or rounded_price != last_price:
-                # Определяем направление изменения
-                if last_price is not None:
-                    change_percent = ((rounded_price - last_price) / last_price) * 100
-                    direction = "📈" if rounded_price > last_price else "📉"
-                    msg = f"{direction} 1 {TARGET_SYMBOL} = {rounded_price:.8f} {quote_sym} ({change_percent:+.4f}%)"
-                else:
-                    msg = f"1 {TARGET_SYMBOL} = {rounded_price:.8f} {quote_sym} (начальное значение)"
+        try:
+            price, quote_sym = find_mlnk_price()
+            if price:
+                rounded_price = round(price, 8)
+                if last_price is None or rounded_price != last_price:
+                    if last_price is not None:
+                        change_percent = ((rounded_price - last_price) / last_price) * 100
+                        direction = "📈" if rounded_price > last_price else "📉"
+                        msg = f"{direction} 1 {TARGET_SYMBOL} = {rounded_price:.8f} {quote_sym} ({change_percent:+.4f}%)"
+                    else:
+                        msg = f"1 {TARGET_SYMBOL} = {rounded_price:.8f} {quote_sym} (начальное значение)"
 
-                last_price = rounded_price
-                print(msg)
-                send_to_telegram(msg)
+                    last_price = rounded_price
+                    print(msg)
+                    send_to_telegram(msg)
+                else:
+                    print(f"Цена не изменилась: {rounded_price:.8f} {quote_sym}")
             else:
-                print(f"Цена не изменилась: {rounded_price:.8f} {quote_sym}")
-        else:
-            print("MLNK pair not found on", DEX_CONTRACT)
+                print("MLNK pair not found on", DEX_CONTRACT)
+        except Exception as e:
+            error_text = f"Ошибка: {e}\n{traceback.format_exc()}"
+            print(error_text)
+            send_to_telegram(f"⚠️ Ошибка в скрипте:\n{e}")
+            time.sleep(10)  # Ждём перед перезапуском
 
         time.sleep(5)
